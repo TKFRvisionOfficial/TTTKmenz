@@ -4,7 +4,7 @@ end
 
 local HOOK_ID = "TTTKMENZMOD"
 
-local function RegisterMutterGladbach()
+local function RegisterPostGameMode()
     print("[TTTKMENZMOD] sh_kmenz_mod.lua loaded", SERVER, CLIENT)
 
     EQUIP_TRAITOR_BYPASS = GenerateNewEquipmentID()
@@ -62,5 +62,4 @@ end
 
 local 
 
-hook.Add("PostGamemodeLoaded", HOOK_ID .. "Register", RegisterMutterGladbach)
-
+hook.Add("RegisterPostGameMode", HOOK_ID .. "Register", RegisterMutterGladbach)
