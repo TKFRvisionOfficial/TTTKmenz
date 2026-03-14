@@ -51,6 +51,30 @@ local function RegisterPostGameMode()
     if SERVER then
         util.AddNetworkString(NET_MSG_BYPASS_TRAITOR_ACTIVATED)
 
+        local tttLogicRole = scripted_ents.GetStored("ttt_logic_role")
+        if not tttLogicRole or not tttLogicRole.t then
+            ErrorNoHalt("[" .. HOOK_ID .. "] Can't find ttt_logic_role.")
+            return
+        end
+
+        local tttLogicEntity = tttLogicRole.t
+        local oldAcceptInput = tttLogicEntity.AcceptInput
+        function tttLogicEntity:AcceptInput(name, activator)
+            if activator.ttt_kmenz_mod_bypass_traitor and name == "TestActivator" then
+                if IsValid(activator) and activator:IsPlayer() then
+                    local activator_role = (GetRoundState() == ROUND_PREP) and ROLE_INNOCENT or activator:GetRole()
+
+                    if self.Role == ROLE_INNOCENT and activator_role == ROLE_TRAITOR then
+                        Dev(2, activator, "passed logic_role test via bypass of", self:GetName())
+                        activator.ttt_kmenz_mod_bypass_traitor = false
+                        self:TriggerOutput("OnPass", activator)
+                        return true
+                    end
+                end
+            end
+            return oldAcceptInput(self, name, activator)
+        end
+
         hook.Add("TTTPrepareRound", HOOK_ID .. "PrepareRound", _HookServerTTTPrepareRound)
         hook.Add("TTTOrderedEquipment", HOOK_ID .. "OrderedEquipment", _HookServerTTTOrderedEquipment)
     end
@@ -60,6 +84,4 @@ local function RegisterPostGameMode()
     end
 end
 
-local 
-
-hook.Add("RegisterPostGameMode", HOOK_ID .. "Register", RegisterMutterGladbach)
+hook.Add("PostGamemodeLoaded", HOOK_ID .. "Register", RegisterPostGameMode)
