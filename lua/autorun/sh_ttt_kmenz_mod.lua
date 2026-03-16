@@ -3,9 +3,27 @@ if SERVER then
 end
 
 local HOOK_ID = "TTTKMENZMOD"
+local NET_MSG_MESSAGE = "TTTKMENZMODMessage"
+
+local PLZ_LOG = false
+local function log_stuff(text)
+    if PLZ_LOG then
+        net.Start(NET_MSG_MESSAGE)
+        net.WriteString("[TTTKMENZMOD] " .. text)
+        print("[TTTKMENZMOD] " .. text)
+        net.Broadcast()
+    end
+end
 
 local function RegisterPostGameMode()
     print("[TTTKMENZMOD] sh_kmenz_mod.lua loaded", SERVER, CLIENT)
+
+    local role_strings = {
+        [ROLE_TRAITOR]   = "traitor",
+        [ROLE_INNOCENT]  = "innocent",
+        [ROLE_DETECTIVE] = "detective",
+        [3] = "any role"
+    }
 
     EQUIP_TRAITOR_BYPASS = GenerateNewEquipmentID()
     local TraitorBypass = {
@@ -22,6 +40,10 @@ local function RegisterPostGameMode()
 
     local NET_MSG_BYPASS_TRAITOR_ACTIVATED = "TTTKMENZMODBypassTraitorActivated"
     local NET_MSG_BYPASS_TRAITOR_USED = "TTTKMENZMODBypassTraitorUsed"
+
+    local function _NetClientRecvMessage (len, ply)
+        chat.AddText(Color(255, 255, 255), net.ReadString())
+    end
 
     local function VectorInside(vec, mins, maxs)
         return (vec.x > mins.x and vec.x < maxs.x
@@ -54,6 +76,7 @@ local function RegisterPostGameMode()
     if SERVER then
         util.AddNetworkString(NET_MSG_BYPASS_TRAITOR_ACTIVATED)
         util.AddNetworkString(NET_MSG_BYPASS_TRAITOR_USED)
+        util.AddNetworkString(NET_MSG_MESSAGE)
 
         local tttLogicRole = scripted_ents.GetStored("ttt_logic_role")
         if not tttLogicRole or not tttLogicRole.t then
@@ -64,11 +87,17 @@ local function RegisterPostGameMode()
         local tttLogicEntity = tttLogicRole.t
         local oldAcceptInput = tttLogicEntity.AcceptInput
         function tttLogicEntity:AcceptInput(name, activator)
-            if activator:HasEquipmentItem(EQUIP_TRAITOR_BYPASS) and name == "TestActivator" then
-                if IsValid(activator) and activator:IsPlayer() then
-                    local activator_role = (GetRoundState() == ROUND_PREP) and ROLE_INNOCENT or activator:GetRole()
-
-                    if self.Role ~= ROLE_ANY and self.Role ~= activator_role then
+            if not IsValid(activator) or not activator:IsPlayer() then
+                log_stuff("Runs wtf")
+                return oldAcceptInput(self, name, activator)
+            end
+            local activator_role = (GetRoundState() == ROUND_PREP) and ROLE_INNOCENT or activator:GetRole()
+            log_stuff("Player role is " .. role_strings[activator_role] .. " expected " .. role_strings[self.Role])
+    
+            if (activator:HasEquipmentItem(EQUIP_TRAITOR_BYPASS) or activator.kmenz_bypass_active) and name == "TestActivator" then
+                if (self.Role == ROLE_INNOCENT or self.Role == ROLE_TRAITOR) and activator_role == ROLE_TRAITOR then
+                    log_stuff("Runs extra")
+                    if activator:HasEquipmentItem(EQUIP_TRAITOR_BYPASS) then
                         Dev(2, activator, "passed logic_role test via bypass of", self:GetName())
                         activator.equipment_items = bit.band(activator.equipment_items, bit.bnot(EQUIP_TRAITOR_BYPASS))
                         activator:SendEquipment()
@@ -76,11 +105,29 @@ local function RegisterPostGameMode()
                         net.Start(NET_MSG_BYPASS_TRAITOR_USED)
                         net.Send(activator)
 
-                        self:TriggerOutput("OnPass", activator)
-                        return true
+                        log_stuff("Running timer...")
+                        activator.kmenz_bypass_active = true
+                        timer.Simple(5, function() if IsValid(activator) then
+                            activator.kmenz_bypass_active = nil
+                            log_stuff("Disabled kmenz_bypass_active")
+                        else
+                            log_stuff("Digga das dumm")
+                        end end)
                     end
+                    
+                    log_stuff("Atleast role check")
+                    if self.Role == ROLE_TRAITOR then
+                        log_stuff("Bypassed with Fail")
+                        self:TriggerOutput("OnFail", activator)
+                    else
+                        log_stuff("Bypassed with Pass")
+                        self:TriggerOutput("OnPass", activator)
+                    end
+
+                    return true
                 end
             end
+            log_stuff("Runs old")
             return oldAcceptInput(self, name, activator)
         end
 
@@ -92,6 +139,7 @@ local function RegisterPostGameMode()
 
         local tttTraitorCheckEntity = tttTraitorCheck.t
         function tttTraitorCheckEntity:CountTraitors()
+            log_stuff("Count these traitors")
             local mins = self:LocalToWorld(self:OBBMins())
             local maxs = self:LocalToWorld(self:OBBMaxs())
 
@@ -104,8 +152,19 @@ local function RegisterPostGameMode()
                             ply.equipment_items = bit.band(ply.equipment_items, bit.bnot(EQUIP_TRAITOR_BYPASS))
                             ply:SendEquipment()
 
+                            log_stuff("Running timer...")
+                            ply.kmenz_bypass_active = true
+                            timer.Simple(5, function() if IsValid(ply) then
+                                ply.kmenz_bypass_active = nil
+                                log_stuff("Disabled kmenz_bypass_active")
+                            else
+                                log_stuff("Digga das dumm")
+                            end end)
+
                             net.Start(NET_MSG_BYPASS_TRAITOR_USED)
                             net.Send(ply)
+                        elseif ply.kmenz_bypass_active then
+                            log_stuff("Atleast role check")
                         else
                             trs = trs + 1
                         end
@@ -123,6 +182,7 @@ local function RegisterPostGameMode()
     if CLIENT then
         net.Receive(NET_MSG_BYPASS_TRAITOR_ACTIVATED, _NetClientRecvBypassTraitorActivated)
         net.Receive(NET_MSG_BYPASS_TRAITOR_USED, _NetClientRecvBypassTraitorUsed)
+        net.Receive(NET_MSG_MESSAGE, _NetClientRecvMessage)
     end
 end
 
