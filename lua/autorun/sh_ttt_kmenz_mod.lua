@@ -188,7 +188,7 @@ local function RegisterPostGameMode()
 
         oldCountTraitors(traitorCheckEntity)
 
-        for ply, oldIsActiveTraitor in ipairs(plyOldActiveTraitorMap) do
+        for ply, oldIsActiveTraitor in pairs(plyOldActiveTraitorMap) do
             if IsValid(ply) then
                 ply.IsActiveTraitor = oldIsActiveTraitor
             end
