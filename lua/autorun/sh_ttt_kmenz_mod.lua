@@ -7,12 +7,16 @@ local NET_MSG_MESSAGE = HOOK_ID .."Message"
 local NET_MSG_BYPASS_TRAITOR_ACTIVATED = HOOK_ID .. "BypassTraitorActivated"
 local NET_MSG_BYPASS_TRAITOR_USED = HOOK_ID .. "BypassTraitorUsed"
 
+local function _GenerateLogMessage(text)
+    return "[" .. HOOK_ID .. "] " .. text
+end
+
 local PLZ_LOG = false
 local function log_stuff(text)
     if PLZ_LOG then
         net.Start(NET_MSG_MESSAGE)
-        net.WriteString("[TTTKMENZMOD] " .. text)
-        print("[TTTKMENZMOD] " .. text)
+        net.WriteString(_GenerateLogMessage(text))
+        print(_GenerateLogMessage(text))
         net.Broadcast()
     end
 end
@@ -47,7 +51,7 @@ local function RegisterPostGameMode()
     local function _GetScriptedEnt(scripted_ent_name)
         local scripted_ent = scripted_ents.GetStored(scripted_ent_name)
         if not scripted_ent or not scripted_ent.t then
-            ErrorNoHalt("[" .. HOOK_ID .. "] Can't find " .. scripted_ent_name .. ".")
+            ErrorNoHalt(_GenerateLogMessage("Can't find " .. scripted_ent_name .. "."))
             return nil
         end
 
