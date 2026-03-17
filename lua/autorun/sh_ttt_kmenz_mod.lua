@@ -3,7 +3,9 @@ if SERVER then
 end
 
 local HOOK_ID = "TTTKMENZMOD"
-local NET_MSG_MESSAGE = "TTTKMENZMODMessage"
+local NET_MSG_MESSAGE = HOOK_ID .."Message"
+local NET_MSG_BYPASS_TRAITOR_ACTIVATED = HOOK_ID .. "BypassTraitorActivated"
+local NET_MSG_BYPASS_TRAITOR_USED = HOOK_ID .. "BypassTraitorUsed"
 
 local PLZ_LOG = false
 local function log_stuff(text)
@@ -38,27 +40,63 @@ local function RegisterPostGameMode()
 
     table.insert(EquipmentItems[ROLE_TRAITOR], TraitorBypass)
 
-    local NET_MSG_BYPASS_TRAITOR_ACTIVATED = "TTTKMENZMODBypassTraitorActivated"
-    local NET_MSG_BYPASS_TRAITOR_USED = "TTTKMENZMODBypassTraitorUsed"
-
-    local function _NetClientRecvMessage (len, ply)
-        chat.AddText(Color(255, 255, 255), net.ReadString())
+    local function _GetPlayerRole(ply)
+        return (GetRoundState() == ROUND_PREP) and ROLE_INNOCENT or ply:GetRole()
     end
 
+    local function _GetScriptedEnt(scripted_ent_name)
+        local scripted_ent = scripted_ents.GetStored(scripted_ent_name)
+        if not scripted_ent or not scripted_ent.t then
+            ErrorNoHalt("[" .. HOOK_ID .. "] Can't find " .. scripted_ent_name .. ".")
+            return nil
+        end
+
+        return scripted_ent.t
+    end
+
+    local function _RemoveEquipTraitorBypass(ply)
+        ply.equipment_items = bit.band(ply.equipment_items, bit.bnot(EQUIP_TRAITOR_BYPASS))
+        ply:SendEquipment()
+    end
+
+    local function _SendUsedTraitorBypassMsg(ply)
+        net.Start(NET_MSG_BYPASS_TRAITOR_USED)
+        net.Send(ply)
+    end
+
+    local function _DisableKmenzBypass(ply)
+        if not IsValid(ply) then
+            return
+        end
+
+        ply.kmenz_bypass_active = nil
+        log_stuff("Disabled kmenz_bypass_active")
+    end
+
+    local function _EnableKmenzBypassTimer(ply)
+        ply.kmenz_bypass_active = true
+        timer.Simple(5, function() _DisableKmenzBypass(ply) end)
+    end
+
+    -- Gefunden auf Otto.de
     local function VectorInside(vec, mins, maxs)
         return (vec.x > mins.x and vec.x < maxs.x
                 and vec.y > mins.y and vec.y < maxs.y
                 and vec.z > mins.z and vec.z < maxs.z)
     end
 
-    local function _HookServerTTTOrderedEquipment (ply, id, is_item)
+    local function _NetClientRecvMessage(len, ply)
+        chat.AddText(Color(255, 255, 255), net.ReadString())
+    end
+
+    local function _HookServerTTTOrderedEquipment(ply, id, is_item)
         if id ~= EQUIP_TRAITOR_BYPASS then return end
 
         net.Start(NET_MSG_BYPASS_TRAITOR_ACTIVATED)
         net.Send(ply)
     end
 
-    local function _NetClientRecvBypassTraitorActivated (len, ply)
+    local function _NetClientRecvBypassTraitorActivated(len, ply)
         chat.AddText(
             Color(255, 255, 255), "You activated the ",
             Color(255, 0, 0), "traitor",
@@ -69,8 +107,100 @@ local function RegisterPostGameMode()
         chat.PlaySound()
     end
 
-    local function _NetClientRecvBypassTraitorUsed (len, ply)
+    local function _NetClientRecvBypassTraitorUsed(len, ply)
         chat.AddText(Color(255, 255, 255), "You used your traitor test bypass.")
+    end
+
+    local function _HandleTraitorBypass(ply)
+        if ply:HasEquipmentItem(EQUIP_TRAITOR_BYPASS) then
+            _RemoveEquipTraitorBypass(ply)
+            _SendUsedTraitorBypassMsg(ply)
+            _EnableKmenzBypassTimer(ply)
+
+            return true
+        elseif ply.kmenz_bypass_active then
+            return true
+        end
+
+        return false
+    end
+
+    local function _TttLogicRoleInjection(name, activator, roleToTestFor)
+        if not IsValid(activator) or not activator:IsPlayer() or name ~= "TestActivator" then
+            return nil
+        end
+
+        local activator_role = _GetPlayerRole(activator)
+        log_stuff("Player role is " .. role_strings[activator_role] .. " expected " .. role_strings[roleToTestFor])
+
+        if activator_role ~= ROLE_TRAITOR or roleToTestFor ~= ROLE_TRAITOR and roleToTestFor ~= ROLE_INNOCENT then
+            return nil
+        end
+
+        if not _HandleTraitorBypass(activator) then
+            return nil
+        end
+        
+        if roleToTestFor == ROLE_TRAITOR then
+            return "OnFail"
+        end
+
+        return "OnPass"
+    end
+
+    local function _PatchTttLogicRole()
+        local tttLogicRole = _GetScriptedEnt("ttt_logic_role")
+        if not tttLogicRole then
+            return
+        end
+
+        local oldAcceptInput = tttLogicRole.AcceptInput
+        function tttLogicRole:AcceptInput(name, activator)
+            local injectResult = _TttLogicRoleInjection(name, activator, self.Role)
+
+            if injectResult then
+                self:TriggerOutput(injectResult, activator)
+                return true
+            end
+
+            return oldAcceptInput(self, name, activator)
+        end
+    end
+
+    local function _TttTraitorCheckInjection(traitorCheckEntity, oldCountTraitors)
+        local mins = traitorCheckEntity:LocalToWorld(traitorCheckEntity:OBBMins())
+        local maxs = traitorCheckEntity:LocalToWorld(traitorCheckEntity:OBBMaxs())
+
+        local plyOldActiveTraitorMap = {}
+
+        for _, ply in player.Iterator() do
+            if IsValid(ply) and VectorInside(ply:GetPos(), mins, maxs) and _HandleTraitorBypass(ply) then
+                plyOldActiveTraitorMap[ply] = ply.IsActiveTraitor
+                function ply:IsActiveTraitor()
+                    return false
+                end
+            end
+        end
+
+        oldCountTraitors(traitorCheckEntity)
+
+        for ply, oldIsActiveTraitor in ipairs(plyOldActiveTraitorMap) do
+            if IsValid(ply) then
+                ply.IsActiveTraitor = oldIsActiveTraitor
+            end
+        end
+    end
+
+    local function _PatchTttTraitorCheck()
+        local tttTraitorCheck = _GetScriptedEnt("ttt_traitor_check")
+        if not tttTraitorCheck then
+            return
+        end
+
+        local oldCountTraitors = tttTraitorCheck.CountTraitors
+        function tttTraitorCheck:CountTraitors()
+            _TttTraitorCheckInjection(self, oldCountTraitors)
+        end
     end
 
     if SERVER then
@@ -78,103 +208,8 @@ local function RegisterPostGameMode()
         util.AddNetworkString(NET_MSG_BYPASS_TRAITOR_USED)
         util.AddNetworkString(NET_MSG_MESSAGE)
 
-        local tttLogicRole = scripted_ents.GetStored("ttt_logic_role")
-        if not tttLogicRole or not tttLogicRole.t then
-            ErrorNoHalt("[" .. HOOK_ID .. "] Can't find ttt_logic_role.")
-            return
-        end
-
-        local tttLogicEntity = tttLogicRole.t
-        local oldAcceptInput = tttLogicEntity.AcceptInput
-        function tttLogicEntity:AcceptInput(name, activator)
-            if not IsValid(activator) or not activator:IsPlayer() then
-                log_stuff("Runs wtf")
-                return oldAcceptInput(self, name, activator)
-            end
-            local activator_role = (GetRoundState() == ROUND_PREP) and ROLE_INNOCENT or activator:GetRole()
-            log_stuff("Player role is " .. role_strings[activator_role] .. " expected " .. role_strings[self.Role])
-    
-            if (activator:HasEquipmentItem(EQUIP_TRAITOR_BYPASS) or activator.kmenz_bypass_active) and name == "TestActivator" then
-                if (self.Role == ROLE_INNOCENT or self.Role == ROLE_TRAITOR) and activator_role == ROLE_TRAITOR then
-                    log_stuff("Runs extra")
-                    if activator:HasEquipmentItem(EQUIP_TRAITOR_BYPASS) then
-                        Dev(2, activator, "passed logic_role test via bypass of", self:GetName())
-                        activator.equipment_items = bit.band(activator.equipment_items, bit.bnot(EQUIP_TRAITOR_BYPASS))
-                        activator:SendEquipment()
-
-                        net.Start(NET_MSG_BYPASS_TRAITOR_USED)
-                        net.Send(activator)
-
-                        log_stuff("Running timer...")
-                        activator.kmenz_bypass_active = true
-                        timer.Simple(5, function() if IsValid(activator) then
-                            activator.kmenz_bypass_active = nil
-                            log_stuff("Disabled kmenz_bypass_active")
-                        else
-                            log_stuff("Digga das dumm")
-                        end end)
-                    end
-                    
-                    log_stuff("Atleast role check")
-                    if self.Role == ROLE_TRAITOR then
-                        log_stuff("Bypassed with Fail")
-                        self:TriggerOutput("OnFail", activator)
-                    else
-                        log_stuff("Bypassed with Pass")
-                        self:TriggerOutput("OnPass", activator)
-                    end
-
-                    return true
-                end
-            end
-            log_stuff("Runs old")
-            return oldAcceptInput(self, name, activator)
-        end
-
-        local tttTraitorCheck = scripted_ents.GetStored("ttt_traitor_check")
-        if not tttLogicRole or not tttLogicRole.t then
-            ErrorNoHalt("[" .. HOOK_ID .. "] Can't find ttt_traitor_check.")
-            return
-        end
-
-        local tttTraitorCheckEntity = tttTraitorCheck.t
-        function tttTraitorCheckEntity:CountTraitors()
-            log_stuff("Count these traitors")
-            local mins = self:LocalToWorld(self:OBBMins())
-            local maxs = self:LocalToWorld(self:OBBMaxs())
-
-            local trs = 0
-            for _,ply in player.Iterator() do
-                if IsValid(ply) and ply:IsActiveTraitor() and ply:Alive() then
-                    local pos = ply:GetPos()
-                    if VectorInside(pos, mins, maxs) then
-                        if ply:HasEquipmentItem(EQUIP_TRAITOR_BYPASS) then
-                            ply.equipment_items = bit.band(ply.equipment_items, bit.bnot(EQUIP_TRAITOR_BYPASS))
-                            ply:SendEquipment()
-
-                            log_stuff("Running timer...")
-                            ply.kmenz_bypass_active = true
-                            timer.Simple(5, function() if IsValid(ply) then
-                                ply.kmenz_bypass_active = nil
-                                log_stuff("Disabled kmenz_bypass_active")
-                            else
-                                log_stuff("Digga das dumm")
-                            end end)
-
-                            net.Start(NET_MSG_BYPASS_TRAITOR_USED)
-                            net.Send(ply)
-                        elseif ply.kmenz_bypass_active then
-                            log_stuff("Atleast role check")
-                        else
-                            trs = trs + 1
-                        end
-                    end
-                end
-            end
-
-            return trs
-        end
-
+        _PatchTttLogicRole()
+        _PatchTttTraitorCheck()
 
         hook.Add("TTTOrderedEquipment", HOOK_ID .. "OrderedEquipment", _HookServerTTTOrderedEquipment)
     end
