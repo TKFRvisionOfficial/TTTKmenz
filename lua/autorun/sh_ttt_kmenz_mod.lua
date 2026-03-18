@@ -22,6 +22,10 @@ local function log_stuff(text)
 end
 
 local function RegisterPostGameMode()
+    if engine.ActiveGamemode() ~= "terrortown" then
+        return
+    end
+
     print("[TTTKMENZMOD] sh_kmenz_mod.lua loaded", SERVER, CLIENT)
 
     local role_strings = {
